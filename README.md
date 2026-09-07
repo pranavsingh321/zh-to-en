@@ -12,6 +12,8 @@ using a LiteLLM proxy running at `localhost:4000/v1` (on a different machine).
 - **Same-length aware**: replaces in place, run-by-run, not line-by-line, keeping
   code structure valid
 - **Dry-run**: show what would change without writing
+- **Filename translation**: optionally translates Chinese characters in filenames
+  (stem only, extension preserved) with `--rename`
 - **Concurrency**: processes files with a thread pool for speed
 - **OpenCode integration**: can optionally route translation through `opencode`
   instead of a raw LiteLLM completion call (see `--backend`)
@@ -54,6 +56,12 @@ python zh_to_en.py /path/to/repo --apply --mode wholefile
 
 # point at a different model / endpoint
 python zh_to_en.py /path/to/repo --apply --model gpt-4o-mini --base-url http://localhost:4000/v1
+
+# also translate Chinese characters in filenames
+python zh_to_en.py /path/to/repo --apply --rename
+
+# dry run showing what would be renamed
+python zh_to_en.py /path/to/repo --rename
 ```
 
 ## Environment variables
@@ -72,6 +80,9 @@ python zh_to_en.py /path/to/repo --apply --model gpt-4o-mini --base-url http://l
 4. Translate each run, then replace them in place, preserving surrounding
    whitespace and structure.
 5. Write the file back only when `--apply` is given.
+6. If `--rename` is passed, translate Chinese characters in filenames after all
+   content translation completes. Files are renamed deepest-first to avoid path
+   conflicts; renames are skipped if the target name already exists.
 
 A small in-session cache avoids re-translating identical strings.
 
@@ -95,3 +106,5 @@ never trusted or rewritten by the model.
 - Batch translation uses a single continuation string; large files are handled
   in smaller per-file batches to avoid reply truncation.
 - This rewrites files in place. Use `--apply` only after reviewing `--dry-run`.
+- `--rename` processes filenames after all file contents are translated. If a
+  translated filename already exists, that rename is skipped to avoid data loss.

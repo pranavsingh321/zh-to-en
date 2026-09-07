@@ -2,11 +2,12 @@
 """Translate Chinese characters to English, file-by-file, via a LiteLLM proxy.
 
 Usage:
-    python zh_to_en.py /path/to/repo [--apply] [--no-ignore]
+    python zh_to_en.py /path/to/repo [--apply] [--no-ignore] [--rename]
         [--backend {litellm,opencode}] [--model MODEL]
         [--base-url URL] [--workers N] [--ext EXT ...]
 
 Default is a dry run that reports what would change.
+Use --rename to also translate Chinese characters in filenames.
 """
 
 from __future__ import annotations
@@ -229,6 +230,31 @@ def replace_chinese(text: str, translator: Translator, mode: str):
     return _CHINESE_RE.sub(lambda m: map_.get(m.group(0), m.group(0)), text), len(found)
 
 
+def translate_filename(name: str, translator: Translator, mode: str) -> str:
+    """Translate Chinese characters in a filename stem, preserving the extension."""
+    p = Path(name)
+    stem = p.stem
+    suffix = p.suffix
+
+    found = _CHINESE_RE.findall(stem)
+    if not found:
+        return name
+
+    if mode == "wholefile":
+        map_ = translator._translate_file(stem, found)
+    else:
+        unique = list(dict.fromkeys(found))
+        map_ = {}
+        for run in unique:
+            map_[run] = translator._translate_one(run)
+
+    new_stem = _CHINESE_RE.sub(lambda m: map_.get(m.group(0), m.group(0)), stem)
+    new_stem = new_stem.strip().replace(" ", "_")
+    if not new_stem:
+        return name
+    return new_stem + suffix
+
+
 def translate_via_opencode(text: str, timeout: int = 120) -> str:
     """Translate using the opencode CLI as a fallback backend."""
     import json
@@ -291,6 +317,44 @@ def process_file(path: Path, translator, apply_changes, stats, mode):
         print(f"[nochange] {path}")
 
 
+def rename_files(files: list[Path], translator: Translator, apply_changes: bool,
+                 stats: dict, mode: str) -> list[tuple[Path, Path]]:
+    """Translate Chinese characters in filenames and rename them.
+
+    Processes deepest paths first to avoid parent-dir conflicts.
+    Renames are done sequentially after content translation is complete.
+    Returns a list of (old_path, new_path) tuples for files that were renamed.
+    """
+    to_rename = []
+    for path in files:
+        stem = path.stem
+        if not _CHINESE_RE.search(stem):
+            continue
+        new_name = translate_filename(path.name, translator, mode)
+        if new_name == path.name:
+            continue
+        new_path = path.parent / new_name
+        if new_path == path:
+            continue
+        to_rename.append((path, new_path))
+
+    to_rename.sort(key=lambda pair: pair[0], reverse=True)
+
+    renamed = []
+    for old_path, new_path in to_rename:
+        if new_path.exists():
+            print(f"[rename-skip] {old_path.name} -> {new_path.name} "
+                  f"(target exists)")
+            continue
+        print(f"[{'apply' if apply_changes else 'dry'}] rename "
+              f"{old_path.name} -> {new_path.name}")
+        if apply_changes:
+            old_path.rename(new_path)
+            stats["files"] += 1
+            renamed.append((old_path, new_path))
+    return renamed
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Translate Chinese characters in a repo to English via LiteLLM."
@@ -319,6 +383,8 @@ def main(argv=None):
                     help="Only process these extensions, e.g. --ext py js ts")
     ap.add_argument("--timeout", type=int, default=120,
                     help="Per-request timeout in seconds")
+    ap.add_argument("--rename", action="store_true",
+                    help="Also translate Chinese characters in filenames")
     args = ap.parse_args(argv)
 
     target = Path(args.target)
@@ -358,6 +424,10 @@ def main(argv=None):
             except Exception as exc:  # noqa: BLE001
                 stats["errors"] += 1
                 print(f"[error] {exc}", file=sys.stderr)
+
+    if args.rename:
+        print()
+        renamed = rename_files(files, translator, args.apply, stats, args.mode)
 
     print(f"\nDone. {stats['files']} file(s), {stats['runs']} Chinese run(s), "
           f"{stats['errors']} error(s).")
