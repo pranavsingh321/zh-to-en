@@ -3,8 +3,7 @@
 
 Usage:
     python zh_to_en.py /path/to/repo [--apply] [--no-ignore] [--rename]
-        [--backend {litellm,opencode}] [--model MODEL]
-        [--base-url URL] [--workers N] [--ext EXT ...]
+        [--model MODEL] [--base-url URL] [--workers N] [--ext EXT ...]
 
 Default is a dry run that reports what would change.
 Use --rename to also translate Chinese characters in filenames.
@@ -15,7 +14,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -255,50 +253,6 @@ def translate_filename(name: str, translator: Translator, mode: str) -> str:
     return new_stem + suffix
 
 
-def translate_via_opencode(text: str, timeout: int = 120) -> str:
-    """Translate using the opencode CLI as a fallback backend."""
-    import json
-
-    prompt = (
-        "Translate the following Chinese text into English. Reply with the English "
-        "translation only, with no extra text. Output exactly one JSON object "
-        '{"zh0": "<translation>"}. Chinese text:\n\n' + text
-    )
-    proc = subprocess.run(
-        ["opencode", "run", prompt],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    out = proc.stdout.strip()
-    if not out:
-        raise RuntimeError(f"opencode produced no output: {proc.stderr[:200]}")
-    out = _strip_code_fence(out)
-    try:
-        return str(json.loads(out)["zh0"])
-    except Exception:
-        return out
-
-
-class OpenCodeTranslator(Translator):
-    """Translator backend that shells out to the `opencode` CLI."""
-
-    def __init__(self, timeout=180, max_batch=20):
-        self.timeout = timeout
-        self.max_batch = max_batch
-        self._cache = {}
-        self._lock = threading.Lock()
-
-    def _translate_one(self, text: str) -> str:
-        with self._lock:
-            if text in self._cache:
-                return self._cache[text]
-        result = translate_via_opencode(text, self.timeout)
-        with self._lock:
-            self._cache[text] = result
-        return result
-
-
 def process_file(path: Path, translator, apply_changes, stats, mode):
     text = read_text(path)
     if text is None:
@@ -364,8 +318,6 @@ def main(argv=None):
                     help="Write changes back to files (default is dry-run)")
     ap.add_argument("--no-ignore", action="store_true",
                     help="Do not skip vendored/build/binary dirs")
-    ap.add_argument("--backend", choices=["litellm", "opencode"],
-                    default="litellm", help="Translation backend")
     ap.add_argument("--mode", choices=["spans", "wholefile"], default="spans",
                     help="spans=translate each Chinese snippet alone (cheap/safe); "
                          "wholefile=translate all snippets with full file context "
@@ -400,18 +352,15 @@ def main(argv=None):
         print("No matching files found.")
         return 0
 
-    if args.backend == "opencode":
-        translator = OpenCodeTranslator(timeout=args.timeout)
-    else:
-        translator = Translator(
-            base_url=args.base_url,
-            api_key=args.api_key,
-            model=args.model,
-            timeout=args.timeout,
-        )
+    translator = Translator(
+        base_url=args.base_url,
+        api_key=args.api_key,
+        model=args.model,
+        timeout=args.timeout,
+    )
 
     mode = "apply" if args.apply else "dry-run"
-    print(f"Processing {len(files)} file(s) with backend={args.backend} "
+    print(f"Processing {len(files)} file(s) with model={args.model} "
           f"translate={args.mode} mode={mode} target={args.target}\n")
 
     stats = {"files": 0, "runs": 0, "errors": 0}

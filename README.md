@@ -15,8 +15,6 @@ using a LiteLLM proxy running at `localhost:4000/v1` (on a different machine).
 - **Filename translation**: optionally translates Chinese characters in filenames
   (stem only, extension preserved) with `--rename`
 - **Concurrency**: processes files with a thread pool for speed
-- **OpenCode integration**: can optionally route translation through `opencode`
-  instead of a raw LiteLLM completion call (see `--backend`)
 
 ## Requirements
 
@@ -47,9 +45,6 @@ python zh_to_en.py /path/to/repo/file.py --apply
 
 # include vendored dirs like node_modules
 python zh_to_en.py /path/to/repo --apply --no-ignore
-
-# translate via the opencode CLI instead of a raw litellm call
-python zh_to_en.py /path/to/repo --apply --backend opencode
 
 # use the whole file as context for better translations
 python zh_to_en.py /path/to/repo --apply --mode wholefile
